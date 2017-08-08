@@ -1,0 +1,27 @@
+#!usr/bin/python
+
+import os
+import sqlite3
+import csv
+
+"""
+Retrieves spatial eQTL SNPs from the 'spatial_eqtls' database
+and produces an output containing: 1) the genes which with the SNP regions
+interact with 2) the distance of the interactions and 3) whether these
+interactions are cis (i.e. < 1mb) or trans (i.e. > 1mb or intra-chromosomal)
+"""
+
+
+def process(eqltDB):
+    conn = sqlite3.connect(eqtlDB)
+    conn.text_factory = str
+    cur = conn.cursor()
+
+    cur.execute("SELECT * FROM eqtls;")
+    cur_data = cur.fetchall()
+    for row in cur_data:
+        print(row[1])
+
+if __name__ == '__main__':
+    eqtlDB = './spatial_eqtls.db'
+    process(eqtlDB)

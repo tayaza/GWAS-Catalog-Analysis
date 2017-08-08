@@ -1,0 +1,80 @@
+import os
+import csv
+import xlrd
+import pandas
+
+
+def get_egenes(trait_files):
+    egenes = []
+    trait_genes = {}
+    for tfile in trait_files:
+        trait = tfile[len(eqtl_dir):len(tfile)-4]
+        trait_genes[trait] = []
+        t_file = open(tfile, 'r')
+        treader = csv.reader(t_file, delimiter = '\t')
+        next(treader, None)
+        for row in treader:
+            if row[3] not in egenes:
+                egenes.append(row[3])
+            if row[3] not in trait_genes[trait]:
+                trait_genes[trait].append(row[3])
+    print(len(egenes))
+    return(egenes, trait_genes)
+
+def get_mgenes(mendeliome):
+    mgenes = []
+    mrows = []
+    mfile = xlrd.open_workbook(mendeliome)
+    shnames = mfile.sheet_names()
+    msheet = mfile.sheet_by_index(0)
+    for rx in range(msheet.nrows):
+        cx = msheet.row_values(rx)
+        if cx[0] not in mgenes:
+            mgenes.append(cx[0])
+        mrows.append([cx[0], cx[7]])
+    print(len(mgenes))
+    return(mgenes, mrows)
+                     
+def compare_genes(egenes, trait_genes, mgenes, mrows):
+    ofile = open('../analysis/mendiliome.txt', 'w')
+    common = []
+    for mg in mgenes:
+        if mg in egenes:
+            common.append(mg)
+    fishers = 2 * len(common) / float(len(egenes) + len(mgenes))
+    print(len(common))
+    print(fishers)
+    ofile.write('#GWAS genes = ' + str(len(egenes)) + '\n')
+    ofile.write('#Mendeliome genes = ' + str(len(mgenes)) + '\n')
+    ofile.write('#common genes = ' + str(len(common)) + '\n')
+    ofile.write('Fishers exact test = ' + str(fishers) + '\n\n')
+
+    cwriter = csv.writer(ofile, delimiter = '\t')
+    cwriter.writerow(['Gene', 'Panel', 'GWAS trait'])
+    genes = {}
+    for gene in common:
+        genes[gene] = []
+        for trait in trait_genes:
+            if gene in trait_genes[trait]:
+                genes[gene].append(trait)
+        trait_list = genes[gene][0]
+        if len(genes[gene]) > 1:
+            for i in range(1, len(genes[gene])):
+                trait_list += ', ' + genes[gene][i]
+        genes[gene] = trait_list
+        for row in mrows:
+            if row[0] == gene:
+                cwriter.writerow([str(gene), str(row[1]), genes[gene]])
+
+
+if __name__ == '__main__':
+    eqtl_dir = '../data/sig_eqtls/'
+    mendeliome = '../data/13059_2015_693_MOESM4_ESM.xls'
+    trait_files = []
+    if os.path.isdir(eqtl_dir):
+        _,_,trait_files = next(os.walk(eqtl_dir), (None, None, []))
+    trait_files = [os.path.join(eqtl_dir,tfile) \
+                       for tfile in trait_files]
+    egenes, trait_genes = get_egenes(trait_files)
+    mgenes, mrows = get_mgenes(mendeliome)
+    compare_genes(egenes, trait_genes, mgenes, mrows)

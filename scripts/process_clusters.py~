@@ -1,0 +1,16 @@
+#!usr/bin/python
+import os
+import csv
+
+
+def readfile(clusterfile):
+    if os.path.isfile(clusterfile):
+        clfile = open(clusterfile, 'r')
+        clreader = csv.reader(clfile, delimiter = '\t')
+        for line in clreader:
+            print(line)
+
+
+if __name__ == '__main__':
+    clusterfile = '../analysis/trait_clusters.txt'
+    readfile(clusterfile)

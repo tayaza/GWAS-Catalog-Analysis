@@ -1,0 +1,107 @@
+#! /usr/bin/env python
+
+import sys
+import csv
+import os
+import argparse
+
+
+def resolve_output_fp(input_fp, output_fp):
+    resolved_output_fp = ''
+    if output_fp == 'NA':
+        resolved_output_fp = input_fp
+    else:
+        resolved_output_fp = output_fp
+    if not resolved_output_fp.endswith('/'):
+        resolved_output_fp = resolved_output_fp + '/'
+    if not os.path.isdir(resolved_output_fp):
+        os.mkdir(resolved_output_fp)
+    return resolved_output_fp
+                        
+
+
+def find_common_snps(input_fp):
+    """
+    Find common SNPs from all trait associations downloaded from GWAS Catalogue.
+    """
+    trait_snps = []
+    all_snps = []
+    common_snps = []
+    snp_count = {}
+    traits = {}
+    matrix = []
+    if os.path.isfile(input_fp):
+        with open(input_fp, 'rb') as infile:
+            associations = csv.reader(infile, delimiter = '\t') 
+            #next(associations, None)
+            for line in associations:
+                trait_snps.append(line)
+                all_snps.append(line[1])
+                
+        infile.close()
+    else:
+        print input_fp + ' not a  file.'
+    done_snps = []
+    for snp in all_snps:
+        occur = all_snps.count(snp)
+        if occur > 1 and snp not in done_snps:
+            done_snps.append(snp)
+            for record in trait_snps:
+                if snp == record[1] and record not in common_snps:
+                    common_snps.append(record)
+                    snp_count[snp] = occur
+                    to_dict = []
+                    if record[0] not in traits.keys():
+                        to_dict.append(snp)
+                        traits[record[0]] = to_dict
+                    else:
+                        to_dict = traits[record[0]]
+                        to_dict.append(snp)
+                        traits[record[0]] = to_dict
+    for trait in traits.keys():
+        snp_count = {}
+        snps_total = len(traits[trait])
+        compare_traits = traits.keys()
+        if snps_total > 3:
+            for trait_snp in traits[trait]:
+                for compare in compare_traits:
+                    if trait_snp in traits[compare]:
+                        if compare not in snp_count.keys():
+                            snp_count[compare] = 1
+                        else:
+                            snp_count[compare] += 1
+                    #else:
+                    #    snp_count[compare] = 0
+            row = []
+            row.append(trait)
+            for t in snp_count:
+                ratio = round(snp_count[t]/float(snps_total), 7)
+                matrix.append([trait, t, snps_total, snp_count[t], ratio])
+
+
+    with open (output_fp + '/' + 'common_snps_count.txt', 'wb') as cluster_file:
+        writer = csv.writer(cluster_file, delimiter = '\t')
+        writer.writerow(['snp', 'count'])
+        for snp in snp_count:
+            writer.writerow([snp,snp_count[snp]])
+    
+
+    with open (output_fp + '/' + 'matrix.txt', 'wb') as cluster_file:
+        writer = csv.writer(cluster_file, delimiter = '\t')
+        writer.writerow(['trait_x', 'trait_y', 'total_snps', 'common_snps', \
+                             'ratio'])
+        writer.writerows(matrix)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description = "")
+    parser.add_argument("-i", "--input", required = True, \
+                            help = "File of GWAS Catalog traits and SNPs") 
+
+    parser.add_argument("-o", "--output", default = 'NA', \
+                            help = "Output directory") 
+
+    args = parser.parse_args()
+    gwas_dir = args.input
+    output_fp = resolve_output_fp(args.input, args.output)
+    find_common_snps(args.input)

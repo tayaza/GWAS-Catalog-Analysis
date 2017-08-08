@@ -1,0 +1,196 @@
+#! /usr/bin/env python
+
+import sys
+import csv
+import os
+import argparse
+import sqlite3
+import multiprocessing
+
+"""
+Find common eGenes among traits and calculate the ratio of occurrence.
+Takes in as input significant (FDR < 0.05)spatial eQTL SNP-gene interactions
+for each GWAS Catalog trait.
+"""
+
+def resolve_output_fp(input_fp, output_fp):
+    print('Resolving IO parameters..')
+    resolved_output_fp = ''
+    if output_fp == 'NA':
+        resolved_output_fp = input_fp
+    else:
+        resolved_output_fp = output_fp
+    if not resolved_output_fp.endswith('/'):
+        resolved_output_fp = resolved_output_fp + '/'
+    if not os.path.isdir(resolved_output_fp):
+        os.mkdir(resolved_output_fp)
+    print(resolved_output_fp)
+    return resolved_output_fp
+                        
+
+
+def find_common_genes(input_fp):
+    """
+    Find common Genes from all trait associations downloaded from GWAS Catalogue.
+    """
+    trait_genes = {}
+    all_genes = []
+    common_genes = []
+    snp_count = {}
+    traits = {}
+    matrix = []
+    print('Extracting genes from eQTL interactions for...')
+    _,traits_dir,_ = next(os.walk(input_fp), (None, [], None))
+    for trait in traits_dir:
+        print('\t' + trait)
+        tfile = open(os.path.join(input_fp, trait) + '/sig_SNP-gene_eqtls.txt', 'r')
+        eqtls= csv.reader(tfile, delimiter = '\t') 
+        next(tfile, None)
+        for line in eqtls:
+            genes = []
+            if trait in trait_genes.keys():
+                genes = trait_genes[trait]
+            genes.append(line[3])
+            trait_genes[trait] = genes
+            all_genes.append(line[3])
+        tfile.close()
+    
+    for trait in trait_genes:
+        trait_genes[trait] = list(set(trait_genes[trait]))
+    all_genes = list(set(all_genes))
+    print(len(all_genes))
+
+    done_genes = []
+
+    for trait in trait_genes.keys():
+        gene_count = {}
+        genes_total = len(trait_genes[trait])
+        compare_traits = trait_genes.keys()
+        if genes_total > 3:
+            for trait_gene in trait_genes[trait]:
+                for compare in compare_traits:
+
+                    if trait_gene in trait_genes[compare]:
+                        if compare not in gene_count.keys():
+                            gene_count[compare] = 1
+                        else:
+                            gene_count[compare] += 1
+                        
+            row = []
+            row.append(trait)
+            for compare in gene_count:
+                total_compare_genes = len(trait_genes[compare])
+                pvalue = 1 - (2*gene_count[compare] \
+                    /float((genes_total + total_compare_genes)))
+                ratio = round(gene_count[compare]/float(genes_total), 7)
+                matrix.append([trait, compare, genes_total, gene_count[compare], ratio, pvalue])
+
+    with open (os.path.join(input_fp, 'gene_matrix.txt'), 'w') as cluster_file:
+        writer = csv.writer(cluster_file, delimiter = '\t')
+        writer.writerow(['trait_x', 'trait_y', '#total_genes', '#common_snps', \
+                             'ratio', 'pvalue'])
+        writer.writerows(matrix)
+    
+def get_trait_snps(snpdir):
+    _,_,t_files = next(os.walk(snpdir), (None, None, []))
+    traits = {}
+    #t_files = ['self_reported_educational_attainment.txt']
+    for trait_file in t_files:
+        trait = trait_file[:len(trait_file)-4]
+        if not os.path.isdir(os.path.join(snpdir, trait)):
+            traits[trait] = []
+            tfile = open(os.path.join(snpdir, trait_file), 'r')
+            eqtls= csv.reader(tfile, delimiter = '\t') 
+            for line in eqtls:
+                traits[trait].append(line[0])
+    print(traits.keys())
+    return(traits)
+
+def get_eqtls(trait_snps, snpdir):
+    conn = sqlite3.connect('./spatial_eqtls.db')
+    conn.text_factory = str
+    cur = conn.cursor()
+    
+    done_snps = {}
+    non_eqtls = []
+    print(len(trait_snps))
+    print('Finding eQTLs for ...')
+    for trait in sorted(trait_snps.keys()):
+        trait_dict = {}
+        not_eqtls = []
+        print('\t ' + trait + '\t ' + str(len(trait_snps[trait])) + ' SNPs')
+        for snp in trait_snps[trait]:
+            if snp in done_snps:
+                trait_dict[snp] = done_snps[snp]
+            elif snp in non_eqtls:
+                not_eqtls.append(snp)
+            else:
+                cur.execute("SELECT * FROM eqtls WHERE snp=?", (snp,))
+                eqtls = cur.fetchall()
+                if eqtls:
+                    trait_dict[snp] = eqtls
+                    done_snps[snp] = eqtls #Cache of querried SNPs
+                else:
+                    non_eqtls.append(snp)
+                    not_eqtls.append(snp)
+        trait_dir = os.path.join(snpdir, trait)
+        if not os.path.isdir(trait_dir):
+            os.mkdir(trait_dir)
+        print('\t\t ' + str(len(trait_dict)) + ' eQTLs')
+        print('\t\t ' + str(len(not_eqtls)) + ' non-eQTLs')
+        efile = open(os.path.join(trait_dir, 'eqtls.txt'), 'w')
+        ewriter = csv.writer(efile, delimiter = '\t')
+        for snp in trait_dict:
+            ewriter.writerows(trait_dict[snp])
+
+
+def sig_SNP_genes(eqtl_summary):
+    """
+    Extract from CoDeS3D summary only SNP-gene eQTLs with FDR less than or equal
+    to 0.05.
+    """
+
+    snp_eqtls = []
+    if os.path.isfile(os.path.join(eqtl_summary, 'summary.txt')):
+        print ('\t ' + eqtl_summary)
+        sfile = open(os.path.join(eqtl_summary, 'summary.txt'), 'r')
+        spatials = csv.reader(sfile, delimiter = '\t')
+        next(spatials, None)
+        for line in spatials:
+            qvalue = line[9]
+            if line[0].startswith('rs') and float(qvalue) <= 0.05:
+                snp_eqtls.append(line)
+        sfile.close()
+    sig = open(os.path.join(eqtl_summary, 'sig_SNP-gene_eqtls.txt'), 'wb')
+    writer = csv.writer(sig, delimiter = '\t')
+    writer.writerow(['SNP', 'SNP_Chromosome', 'SNP_Locus', 'Gene_Name',
+                     'Gene_Chromosome', 'Gene_Start', 'Gene_End', 'Tissue',
+                     'p-value', 'q-value', 'Cell_Lines', 'GTEx_cis_p_Threshold',
+                     'cis_SNP_Gene_Interaction', 'SNP-gene_Distance',
+                     'Expression_Level_in_eQTL_Tissue', 'Max_Expressed_Tissue',
+                     'Maximum_Expression_Level', 'Min_Expressed_Tissue',
+                     'Min_Expression_Level'])
+    writer.writerows(snp_eqtls)
+    sig.close()
+
+    return snp_eqtls
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description = "")
+    parser.add_argument("-i", "--input", required = True, \
+                            help = "File of GWAS Catalog traits and SNPs") 
+
+    parser.add_argument("-o", "--output", default = 'NA', \
+                            help = "Output directory") 
+
+    args = parser.parse_args()
+    #eqtl_dir = args.input
+    snpdir = args.input
+    #output_fp = resolve_output_fp(args.input, args.output)
+    _,traitdirs,_ = next(os.walk(args.input), (None, [], None))
+    traitdirs = [os.path.join(args.input, tdir) for tdir in traitdirs]
+    find_common_genes(args.input)
+    #trait_snps = get_trait_snps(snpdir)
+    #get_eqtls(trait_snps, snpdir)
+    #for tdir in traitdirs:
+    #    sig_SNP_genes(tdir)

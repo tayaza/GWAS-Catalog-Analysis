@@ -1,0 +1,18 @@
+#!/bin/python
+
+import os
+import csv
+
+
+def read_matrix(matrix_file):
+    mfile = open(matrix_file, 'r')
+    matrix = csv.reader(mfile, delimiter = '\t')
+    next(matrix, None)
+    return(matrix)
+
+
+if __name__=='__main__':
+    matrix_file = '../data/downloaded/test/gene_matrix.txt'
+    query_traits = 'comprehensive_strength_index__muscle_measurement'
+    matrix = read_matrix(matrix_file)
+    print(len(matrix))
